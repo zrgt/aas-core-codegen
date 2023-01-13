@@ -1,4 +1,4 @@
-"""Transpile Python to Golang code."""
+"""Transpile Python to Go code."""
 import abc
 import io
 from typing import (
@@ -20,23 +20,22 @@ from aas_core_codegen.common import (
     Identifier,
     indent_but_first_line,
 )
-from aas_core_codegen.csharp import (
-    common as csharp_common,
-    naming as csharp_naming,
+from aas_core_codegen.golang import (
+    common as golang_common,
+    naming as golang_naming,
 )
-from aas_core_codegen.csharp.common import (
+from aas_core_codegen.golang.common import (
     INDENT as I,
     INDENT2 as II,
 )
 from aas_core_codegen.intermediate import type_inference as intermediate_type_inference
 from aas_core_codegen.parse import tree as parse_tree
 
-# TODO (mristin, 2022-12-21): continue here once golang.naming and golang.common implemented
 
 class Transpiler(
     parse_tree.RestrictedTransformer[Tuple[Optional[Stripped], Optional[Error]]]
 ):
-    """Transpile a node of our AST to C# code, or return an error."""
+    """Transpile a node of our AST to Go code, or return an error."""
 
     def __init__(
         self,
@@ -52,7 +51,7 @@ class Transpiler(
         )
 
         # Keep track whenever we define a variable name, so that we can know how to
-        # generate the reference in the C# code.
+        # generate the reference in the Go code.
         self._variable_name_set = set()  # type: Set[Identifier]
 
     @ensure(lambda result: (result[0] is not None) ^ (result[1] is not None))
@@ -75,17 +74,25 @@ class Transpiler(
         if isinstance(
             instance_type, intermediate_type_inference.OurTypeAnnotation
         ) and isinstance(instance_type.our_type, intermediate.Enumeration):
-            # The member denotes a literal of an enumeration.
-            member_name = csharp_naming.enum_literal_name(node.name)
+            # NOTE (mristin, 2023-01-13):
+            # The member denotes an enumeration literal of an enumeration.
+            # In Go, enumeration literal are mere constants. Hence, we can not
+            # "de-reference" the enumeration literals from an enumeration, but
+            # generate the constant name here.
+            return Stripped(
+                golang_naming.enum_literal_name(
+                enumeration_name=instance_type.our_type.name,
+                literal_name=node.name)
+            ), None
 
         elif isinstance(member_type, intermediate_type_inference.MethodTypeAnnotation):
-            member_name = csharp_naming.method_name(node.name)
+            member_name = golang_naming.method_name(node.name)
 
         elif isinstance(
             instance_type, intermediate_type_inference.OurTypeAnnotation
         ) and isinstance(instance_type.our_type, intermediate.Class):
             if node.name in instance_type.our_type.properties_by_name:
-                member_name = csharp_naming.property_name(node.name)
+                member_name = golang_naming.property_name(node.name)
             else:
                 return None, Error(
                     node.original_node,
@@ -97,7 +104,16 @@ class Transpiler(
             instance_type, intermediate_type_inference.EnumerationAsTypeTypeAnnotation
         ):
             if node.name in instance_type.enumeration.literals_by_name:
-                member_name = csharp_naming.enum_literal_name(node.name)
+                # NOTE (mristin, 2023-01-13):
+                # The member denotes an enumeration literal of an enumeration.
+                # In Go, enumeration literal are mere constants. Hence, we can not
+                # "de-reference" the enumeration literals from an enumeration, but
+                # generate the constant name here.
+                return Stripped(
+                    golang_naming.enum_literal_name(
+                        enumeration_name=instance_type.enumeration.name,
+                        literal_name=node.name)
+                ), None
             else:
                 return None, Error(
                     node.original_node,
@@ -116,6 +132,8 @@ class Transpiler(
         assert member_name is not None
 
         return Stripped(f"{instance}.{member_name}"), None
+
+    # TODO (mristin, 2023-01-13): continue here
 
     @ensure(lambda result: (result[0] is not None) ^ (result[1] is not None))
     def transform_index(
@@ -274,7 +292,7 @@ class Transpiler(
         else:
             # NOTE (mristin, 2022-04-07):
             # This is a very rudimentary heuristic for breaking the lines, and can be
-            # greatly improved by rendering into C# code. However, at this point, we
+            # greatly improved by rendering into Go code. However, at this point, we
             # lack time for more sophisticated reformatting approaches.
             if "\n" in antecedent:
                 not_antecedent = f"""\
@@ -287,7 +305,7 @@ class Transpiler(
         if not isinstance(node.consequent, no_parentheses_types_in_this_context):
             # NOTE (mristin, 2022-04-07):
             # This is a very rudimentary heuristic for breaking the lines, and can be
-            # greatly improved by rendering into C# code. However, at this point, we
+            # greatly improved by rendering into Go code. However, at this point, we
             # lack time for more sophisticated reformatting approaches.
             if "\n" in consequent:
                 consequent = Stripped(
@@ -332,7 +350,7 @@ class Transpiler(
         if not isinstance(node.member.instance, (parse_tree.Name, parse_tree.Member)):
             instance = Stripped(f"({instance})")
 
-        method_name = csharp_naming.method_name(node.member.name)
+        method_name = golang_naming.method_name(node.member.name)
 
         joined_args = ", ".join(args)
 
@@ -394,7 +412,7 @@ class Transpiler(
         if isinstance(
             func_type, intermediate_type_inference.VerificationTypeAnnotation
         ):
-            method_name = csharp_naming.method_name(func_type.func.name)
+            method_name = golang_naming.method_name(func_type.func.name)
 
             joined_args = ", ".join(args)
 
@@ -484,7 +502,7 @@ class Transpiler(
         elif isinstance(node.value, (int, float)):
             return Stripped(str(node.value)), None
         elif isinstance(node.value, str):
-            return Stripped(csharp_common.string_literal(node.value)), None
+            return Stripped(golang_common.string_literal(node.value)), None
         else:
             assert_never(node.value)
 
@@ -583,7 +601,7 @@ class Transpiler(
             if not isinstance(value_node, no_parentheses_types_in_this_context):
                 # NOTE (mristin, 2022-04-07):
                 # This is a very rudimentary heuristic for breaking the lines, and can
-                # be greatly improved by rendering into C# code. However, at this point,
+                # be greatly improved by rendering into Go code. However, at this point,
                 # we lack time for more sophisticated reformatting approaches.
                 if "\n" in value:
                     value = Stripped(
@@ -638,7 +656,7 @@ class Transpiler(
             if not isinstance(value_node, no_parentheses_types_in_this_context):
                 # NOTE (mristin, 2022-04-07):
                 # This is a very rudimentary heuristic for breaking the lines, and can
-                # be greatly improved by rendering into C# code. However, at this point,
+                # be greatly improved by rendering into Go code. However, at this point,
                 # we lack time for more sophisticated reformatting approaches.
                 if "\n" in value:
                     value = Stripped(
@@ -733,7 +751,7 @@ class Transpiler(
         needs_interpolation = False
         for value in node.values:
             if isinstance(value, str):
-                string_literal = csharp_common.string_literal(
+                string_literal = golang_common.string_literal(
                     value.replace("{", "{{").replace("}", "}}")
                 )
 
