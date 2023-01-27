@@ -133,8 +133,6 @@ class Transpiler(
 
         return Stripped(f"{instance}.{member_name}"), None
 
-    # TODO (mristin, 2023-01-13): continue here
-
     @ensure(lambda result: (result[0] is not None) ^ (result[1] is not None))
     def transform_index(
         self, node: parse_tree.Index
@@ -142,6 +140,7 @@ class Transpiler(
         collection, error = self.transform(node.collection)
         if error is not None:
             return None, error
+        assert collection is not None
 
         index, error = self.transform(node.index)
         if error is not None:
@@ -155,8 +154,16 @@ class Transpiler(
             pass
 
         if index_as_int is not None and index_as_int < 0:
-            # pylint: disable=invalid-unary-operand-type
-            index = Stripped(f"^{-index_as_int}")
+            if '\n' in collection:
+                index = Stripped(
+                    f"""\
+len(
+{I}{indent_but_first_line(collection, I)}
+) - 1"""
+                )
+            else:
+                # pylint: disable=invalid-unary-operand-type
+                index = Stripped(f"len({collection}) - 1")
 
         no_parentheses_types = (
             parse_tree.Member,
@@ -181,6 +188,8 @@ class Transpiler(
         parse_tree.Comparator.EQ: "==",
         parse_tree.Comparator.NE: "!=",
     }
+
+    # TODO (mristin, 2023-01-27): continue here
 
     @ensure(lambda result: (result[0] is not None) ^ (result[1] is not None))
     def transform_comparison(
